@@ -21,6 +21,7 @@
 #include "controller_manager/controller_manager.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "realtime_tools/thread_priority.hpp"
+#include "rosgraph_msgs/msg/clock.hpp"
 
 using namespace std::chrono_literals;
 
@@ -42,7 +43,6 @@ int main(int argc, char ** argv)
   std::string manager_node_name = "controller_manager";
 
   auto cm = std::make_shared<controller_manager::ControllerManager>(executor, manager_node_name);
-
   RCLCPP_INFO(cm->get_logger(), "update rate is %d Hz", cm->get_update_rate());
 
   std::thread cm_thread(
@@ -60,6 +60,9 @@ int main(int argc, char ** argv)
         RCLCPP_INFO(cm->get_logger(), "RT kernel is recommended for better performance");
       }
 
+      auto msg = rosgraph_msgs::msg::Clock();
+      auto clock_pub = cm->create_publisher<rosgraph_msgs::msg::Clock>("clock", 10);
+
       // for calculating sleep time
       auto const period = std::chrono::nanoseconds(1'000'000'000 / cm->get_update_rate());
       auto const cm_now = std::chrono::nanoseconds(cm->now().nanoseconds());
@@ -68,22 +71,37 @@ int main(int argc, char ** argv)
 
       // for calculating the measured period of the loop
       rclcpp::Time previous_time = cm->now();
+      uint64_t sim_time_nano = 0;
 
-      while (rclcpp::ok())
-      {
+      while (rclcpp::ok()) {
+        msg.clock.sec = (int) (sim_time_nano / 1'000'000'000);
+        msg.clock.nanosec = (int) (sim_time_nano % 1'000'000'000);
+//        clock_pub->publish(msg);
+
+        auto start = std::chrono::steady_clock::now();
+        // make sure the published clock time has taken effect
+        do {
+            auto const tmp_time = cm->now();
+            auto end = std::chrono::steady_clock::now();
+            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()
+            if (elapsed_ms > 1000) {
+                throw std::invalid_argument("Waited 1000ms but expected clock didn't match actual clock (YORC)")
+            }
+        } while ((unsigned long)  tmp_time.nanoseconds() != sim_time_nano);
+
         // calculate measured period
         auto const current_time = cm->now();
         auto const measured_period = current_time - previous_time;
+
         previous_time = current_time;
-
         // execute update loop
-        cm->read(cm->now(), measured_period);
-        cm->update(cm->now(), measured_period);
-        cm->write(cm->now(), measured_period);
+        cm->read(current_time, measured_period);
+        cm->update(current_time, measured_period);
+        cm->write(current_time, measured_period);
 
-        // wait until we hit the end of the period
-        next_iteration_time += period;
-        std::this_thread::sleep_until(next_iteration_time);
+        // advance simulated time by one ms
+        sim_time_nano += 1'000'000;
+//          std::this_thread::sleep_for(std::chrono::nanoseconds(10000));
       }
     });
 
