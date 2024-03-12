@@ -76,16 +76,17 @@ int main(int argc, char ** argv)
       while (rclcpp::ok()) {
         msg.clock.sec = (int) (sim_time_nano / 1'000'000'000);
         msg.clock.nanosec = (int) (sim_time_nano % 1'000'000'000);
-//        clock_pub->publish(msg);
+        clock_pub->publish(msg);
 
         auto start = std::chrono::steady_clock::now();
         // make sure the published clock time has taken effect
+        auto tmp_time = cm->now();
         do {
-            auto const tmp_time = cm->now();
+            tmp_time = cm->now();
             auto end = std::chrono::steady_clock::now();
-            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count()
+            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
             if (elapsed_ms > 1000) {
-                throw std::invalid_argument("Waited 1000ms but expected clock didn't match actual clock (YORC)")
+                throw std::invalid_argument("Waited 1000ms but expected clock didn't match actual clock (YORC)");
             }
         } while ((unsigned long)  tmp_time.nanoseconds() != sim_time_nano);
 
