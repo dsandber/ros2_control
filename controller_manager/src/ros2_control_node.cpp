@@ -72,33 +72,29 @@ int main(int argc, char ** argv)
       // for calculating the measured period of the loop
       rclcpp::Time previous_time = cm->now();
       uint64_t sim_time_nano = 0;
+      int count = 0;
 
       while (rclcpp::ok()) {
-        msg.clock.sec = (int) (sim_time_nano / 1'000'000'000);
-        msg.clock.nanosec = (int) (sim_time_nano % 1'000'000'000);
-        clock_pub->publish(msg);
-
-        auto start = std::chrono::steady_clock::now();
-        // make sure the published clock time has taken effect
-        auto tmp_time = cm->now();
-        do {
-            tmp_time = cm->now();
-            auto end = std::chrono::steady_clock::now();
-            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-            if (elapsed_ms > 1000) {
-                throw std::invalid_argument("Waited 1000ms but expected clock didn't match actual clock (YORC)");
-            }
-        } while ((unsigned long)  tmp_time.nanoseconds() != sim_time_nano);
+        if (count++ % 1000 == 0) {
+            msg.clock.sec = (int) (sim_time_nano / 1'000'000'000);
+            msg.clock.nanosec = (int) (sim_time_nano % 1'000'000'000);
+            clock_pub->publish(msg);
+        }
 
         // calculate measured period
-        auto const current_time = cm->now();
+        auto const current_time = rclcpp::Time(sim_time_nano, RCL_ROS_TIME);
+//        auto ret = rcl_set_ros_time_override(
+//            current_time->get_clock_handle(),
+//            sim_time_nano
+//        );
+
         auto const measured_period = current_time - previous_time;
 
         previous_time = current_time;
         // execute update loop
-        cm->read(current_time, measured_period);
+//        cm->read(current_time, measured_period);
         cm->update(current_time, measured_period);
-        cm->write(current_time, measured_period);
+//        cm->write(current_time, measured_period);
 
         // advance simulated time by one ms
         sim_time_nano += 1'000'000;
