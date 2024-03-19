@@ -22,6 +22,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "realtime_tools/thread_priority.hpp"
 #include "rosgraph_msgs/msg/clock.hpp"
+#include "joint_trajectory_controller/joint_trajectory_controller.hpp"
 
 using namespace std::chrono_literals;
 
@@ -46,40 +47,50 @@ int main(int argc, char ** argv)
   RCLCPP_INFO(cm->get_logger(), "update rate is %d Hz", cm->get_update_rate());
 
   std::thread cm_thread(
-    [cm]()
-    {
-      if (realtime_tools::has_realtime_kernel())
-      {
-        if (!realtime_tools::configure_sched_fifo(kSchedPriority))
-        {
+    [cm]() {
+      if (realtime_tools::has_realtime_kernel()) {
+        if (!realtime_tools::configure_sched_fifo(kSchedPriority)) {
           RCLCPP_WARN(cm->get_logger(), "Could not enable FIFO RT scheduling policy");
         }
-      }
-      else
-      {
+      } else {
         RCLCPP_INFO(cm->get_logger(), "RT kernel is recommended for better performance");
       }
 
-      auto msg = rosgraph_msgs::msg::Clock();
-      auto clock_pub = cm->create_publisher<rosgraph_msgs::msg::Clock>("clock", 10);
+//      auto msg = rosgraph_msgs::msg::Clock();
+//      auto clock_pub = cm->create_publisher<rosgraph_msgs::msg::Clock>("clock", 10);
 
       // for calculating sleep time
-      auto const period = std::chrono::nanoseconds(1'000'000'000 / cm->get_update_rate());
-      auto const cm_now = std::chrono::nanoseconds(cm->now().nanoseconds());
-      std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds>
-        next_iteration_time{cm_now};
+//      auto const period = std::chrono::nanoseconds(1'000'000'000 / cm->get_update_rate());
+//      auto const cm_now = std::chrono::nanoseconds(cm->now().nanoseconds());
+//      std::chrono::time_point<std::chrono::system_clock, std::chrono::nanoseconds>
+//        next_iteration_time{cm_now};
 
       // for calculating the measured period of the loop
-      rclcpp::Time previous_time = cm->now();
-      uint64_t sim_time_nano = 0;
-      int count = 0;
+//      rclcpp::Time previous_time = cm->now();
+      uint64_t sim_time_nano = 1'000'000;
+      auto previous_time = rclcpp::Time(0L, RCL_ROS_TIME);
 
+//      int count = 0;
+      std::shared_ptr<joint_trajectory_controller::JointTrajectoryController> jtc = NULL;
+      auto begin = std::chrono::steady_clock::now();
       while (rclcpp::ok()) {
-        if (count++ % 1000 == 0) {
-            msg.clock.sec = (int) (sim_time_nano / 1'000'000'000);
-            msg.clock.nanosec = (int) (sim_time_nano % 1'000'000'000);
-            clock_pub->publish(msg);
+        auto end = std::chrono::steady_clock::now();
+        auto elapsed_millis = std::chrono::duration_cast<std::chrono::milliseconds>(end - begin).count();
+        if (!jtc && elapsed_millis > 500) {
+              auto controller_specs = cm->get_loaded_controllers();
+              long size = controller_specs.size();
+              if (size > 0) {
+                auto interface_ptr = controller_specs[0].c;
+                jtc = std::dynamic_pointer_cast<joint_trajectory_controller::JointTrajectoryController>(interface_ptr);
+              }
+              begin = std::chrono::steady_clock::now();;
         }
+
+//        if (count++ % 1000 == 0) {
+//            msg.clock.sec = (int) (sim_time_nano / 1'000'000'000);
+//            msg.clock.nanosec = (int) (sim_time_nano % 1'000'000'000);
+//            clock_pub->publish(msg);
+//        }
 
         // calculate measured period
         auto const current_time = rclcpp::Time(sim_time_nano, RCL_ROS_TIME);
@@ -97,8 +108,13 @@ int main(int argc, char ** argv)
 //        cm->write(current_time, measured_period);
 
         // advance simulated time by one ms
+
         sim_time_nano += 1'000'000;
-//          std::this_thread::sleep_for(std::chrono::nanoseconds(10000));
+        if (jtc && jtc->has_zactive_trajectory()) {
+           // don't delay, spin as fast as possible
+        } else {
+          std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
       }
     });
 
